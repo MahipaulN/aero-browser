@@ -312,7 +312,7 @@ async function runE2E() {
   // -------------------------------------------------------------
   console.log("\n--- TEST 8: Capture Visual Proof of Omnibox Focus UI ---");
   try {
-    const artifactDir = "C:\\Users\\mahip\\.gemini\\antigravity-ide\\brain\\4c74b919-7af1-4170-a1e6-00f9c01f7635";
+    const artifactDir = require("os").tmpdir();
     const imagePath = path.join(artifactDir, "omnibox_focus_verified.png");
     const image = await wc.capturePage({ x: 0, y: 0, width: 1200, height: 180 });
     fs.writeFileSync(imagePath, image.toPNG());

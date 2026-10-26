@@ -257,7 +257,18 @@ function registerIpcHandlers(mainWindow, options = {}) {
     return result.filePaths[0];
   });
 
-  // AdBlocker
+  // AdBlocker: network filtering reads settings per request; cosmetics need re-applying on live tabs
+  const reapplyCosmetics = () => {
+    for (const tab of tabManager.tabs.values()) {
+      const wc = tab.view?.webContents;
+      if (!wc || wc.isDestroyed()) continue;
+      const url = wc.getURL();
+      if (url && /^https?:/i.test(url)) {
+        adblockManager.injectCosmeticStyles(wc, url, tabManager.profileId).catch(() => {});
+      }
+    }
+  };
+
   ipcMain.handle("adblock:getStats", (_event, domain) => {
     if (domain !== undefined && typeof domain !== "string") {
       return adblockManager.getStatsForDomain("", tabManager.profileId);
@@ -279,11 +290,15 @@ function registerIpcHandlers(mainWindow, options = {}) {
         blockedCount: 0
       };
     }
-    return adblockManager.toggleSite(domain, tabManager.profileId);
+    const result = await adblockManager.toggleSite(domain, tabManager.profileId);
+    reapplyCosmetics();
+    return result;
   });
 
   ipcMain.handle("adblock:toggleGlobal", async () => {
-    return adblockManager.toggleGlobal(tabManager.profileId);
+    const result = await adblockManager.toggleGlobal(tabManager.profileId);
+    reapplyCosmetics();
+    return result;
   });
 
   // Native Context Menus (guaranteed to render on top of any WebContentsView)

@@ -451,17 +451,29 @@ class AdBlockManager {
    * Inject safe CSS-only cosmetic ad hiding without executing dangerous scriptlets
    * that can cause stack overflows or break complex web applications.
    */
+  async _replaceCss(wc, key, css) {
+    if (!this._cssKeys) this._cssKeys = new WeakMap();
+    const prev = this._cssKeys.get(wc) || {};
+    if (prev[key]) {
+      try { await wc.removeInsertedCSS(prev[key]); } catch {}
+      delete prev[key];
+    }
+    if (css) {
+      try { prev[key] = await wc.insertCSS(css, { cssOrigin: "user" }); } catch {}
+    }
+    this._cssKeys.set(wc, prev);
+  }
+
   async injectCosmeticStyles(wc, url, profileId = "default") {
     if (!wc || wc.isDestroyed() || !url) return;
 
     if (!this.isGlobalEnabled(profileId)) {
+      await this._replaceCss(wc, "yt", null);
+      await this._replaceCss(wc, "generic", null);
       if (url.includes("youtube.com")) {
         try {
           await wc.executeJavaScript(`
-            if (window.__aero_yt_interval) {
-              clearInterval(window.__aero_yt_interval);
-              window.__aero_yt_interval = null;
-            }
+            if (typeof window.__aero_yt_cleanup === 'function') window.__aero_yt_cleanup();
           `, true);
         } catch {}
       }
@@ -470,13 +482,12 @@ class AdBlockManager {
 
     const host = normalizeHostname(url);
     if (host && this.isDomainAllowlisted(host, profileId)) {
+      await this._replaceCss(wc, "yt", null);
+      await this._replaceCss(wc, "generic", null);
       if (url.includes("youtube.com")) {
         try {
           await wc.executeJavaScript(`
-            if (window.__aero_yt_interval) {
-              clearInterval(window.__aero_yt_interval);
-              window.__aero_yt_interval = null;
-            }
+            if (typeof window.__aero_yt_cleanup === 'function') window.__aero_yt_cleanup();
           `, true);
         } catch {}
       }
@@ -486,7 +497,7 @@ class AdBlockManager {
     // Tailored, non-destructive CSS hiding for YouTube ad banners, sponsored slots, and video cards
     if (url.includes("youtube.com")) {
       try {
-        await wc.insertCSS(`
+        await this._replaceCss(wc, "yt", `
           .ytp-ad-overlay-container,
           .ytp-ad-message-container,
           .ytp-ad-action-interstitial,
@@ -513,74 +524,46 @@ class AdBlockManager {
           ytd-mealbar-promo-renderer {
             display: none !important;
           }
-        `, { cssOrigin: "user" });
+        `);
 
-        // Reliable background auto-skip and ad-acceleration for in-stream ads
+        // Idempotent, non-invasive skip helper: only clicks the native Skip control.
+        // Never seeks, mutes, or changes playbackRate (seeking to duration stalls the player).
         await wc.executeJavaScript(`
           (() => {
-            if (window.__aero_yt_interval) {
-              clearInterval(window.__aero_yt_interval);
-            }
+            const prev = window.__aero_yt_cleanup;
+            if (typeof prev === 'function') { try { prev(); } catch {} }
 
-            let wasAdShowing = false;
-            let originalMuted = false;
+            const SKIP = [
+              '.ytp-ad-skip-button',
+              '.ytp-ad-skip-button-modern',
+              '.ytp-skip-ad-button',
+              '.ytp-ad-skip-button-container button',
+              '[id^="skip-button"] button'
+            ].join(',');
 
-            const checkAndSkipAd = () => {
-              const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
-              if (!player) return;
-
-              const isAd = player.classList.contains('ad-showing') ||
-                           player.classList.contains('ad-interrupting') ||
-                           (typeof player.getAdState === 'function' && player.getAdState() > 0);
-
-              const video = player.querySelector('video.html5-main-video') || player.querySelector('video') || document.querySelector('video');
-
-              if (isAd) {
-                // 1. Mute ad immediately to prevent audio bleed in the background
-                if (video) {
-                  if (!wasAdShowing) {
-                    wasAdShowing = true;
-                    originalMuted = video.muted;
-                    video.muted = true;
-                  }
-                  video.playbackRate = 16;
-                  if (Number.isFinite(video.duration) && video.duration > 0) {
-                    video.currentTime = video.duration;
-                  }
-                }
-
-                // 2. Click native skip button immediately if available
-                const skipSelectors = [
-                  '.ytp-ad-skip-button',
-                  '.ytp-ad-skip-button-modern',
-                  '.ytp-skip-ad-button',
-                  '.ytp-ad-skip-button-text',
-                  '.ytp-ad-skip-button-container button',
-                  'button.ytp-ad-skip-button-modern',
-                  '[id^="skip-button"] button',
-                  '.ytp-ad-overlay-close-button'
-                ];
-                for (const sel of skipSelectors) {
-                  const btn = document.querySelector(sel);
-                  if (btn) {
-                    btn.click();
-                    break;
-                  }
-                }
-              } else if (wasAdShowing) {
-                wasAdShowing = false;
-                if (video) {
-                  video.playbackRate = 1.0;
-                  video.muted = originalMuted;
-                }
-              }
+            let scheduled = false;
+            const run = () => {
+              scheduled = false;
+              const player = document.getElementById('movie_player');
+              if (!player || !player.classList.contains('ad-showing')) return;
+              const btn = player.querySelector(SKIP);
+              if (btn && btn.offsetParent !== null) btn.click();
+            };
+            const schedule = () => {
+              if (scheduled) return;
+              scheduled = true;
+              setTimeout(run, 250);
             };
 
-            window.__aero_yt_interval = setInterval(checkAndSkipAd, 100);
-            checkAndSkipAd();
+            const target = document.getElementById('movie_player') || document.body || document.documentElement;
+            const obs = new MutationObserver(schedule);
+            obs.observe(target, { attributes: true, attributeFilter: ['class'], childList: true, subtree: true });
 
-            const obs = new MutationObserver(checkAndSkipAd);
-            obs.observe(document.body || document.documentElement, { childList: true, subtree: true });
+            window.__aero_yt_cleanup = () => {
+              obs.disconnect();
+              window.__aero_yt_cleanup = null;
+            };
+            window.__aero_yt_interval = null;
           })()
         `, true);
       } catch {}
@@ -602,7 +585,7 @@ class AdBlockManager {
         });
 
         if (styles && styles.length > 0) {
-          await wc.insertCSS(styles, { cssOrigin: "user" });
+          await this._replaceCss(wc, "generic", styles);
         }
       } catch {}
     }
