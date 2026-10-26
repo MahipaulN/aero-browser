@@ -96,5 +96,9 @@ contextBridge.exposeInMainWorld("aero", Object.freeze({
   onFindResult: callback => subscribe("find:result", callback),
   onAdblockStatsUpdated: callback => subscribe("adblock:stats-updated", callback),
   onAdblockGlobalUpdated: callback => subscribe("adblock:global-updated", callback),
-  onTriggerFind: callback => subscribe("action:trigger-find", callback)
+  onTriggerFind: callback => subscribe("action:trigger-find", callback),
+  onFocusOmnibox: callback => subscribe("action:focus-omnibox", callback),
+  onTriggerBookmark: callback => subscribe("action:trigger-bookmark", callback),
+  onOpenClearData: callback => subscribe("action:open-clear-data", callback),
+  onActionEscape: callback => subscribe("action:escape", callback)
 }));

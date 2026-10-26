@@ -394,10 +394,18 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   background: rgba(26, 32, 45, 0.65);
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.06), 0 2px 6px rgba(0, 0, 0, 0.2);
 }
+.address-bar:hover {
+  background: var(--glass-hover);
+  border-color: var(--border-strong);
+}
 .address-bar:focus-within {
   background: var(--glass-active);
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px var(--accent-subtle);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+.address-bar:has(.address-input:focus-visible) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-subtle);
 }
 
 .security-badge {
@@ -422,15 +430,20 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   background: var(--border-subtle);
 }
 
-.address-input {
-  border: 0;
-  outline: 0;
+.address-input,
+.address-input:focus,
+.address-input:focus-visible {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  -webkit-tap-highlight-color: transparent;
   flex: 1;
   min-width: 0;
   background: transparent;
   color: var(--text-main);
   font-size: 13px;
   user-select: text;
+  caret-color: var(--accent);
 }
 .address-input::placeholder {
   color: var(--text-tertiary);

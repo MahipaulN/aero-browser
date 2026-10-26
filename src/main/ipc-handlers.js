@@ -259,10 +259,26 @@ function registerIpcHandlers(mainWindow, options = {}) {
 
   // AdBlocker
   ipcMain.handle("adblock:getStats", (_event, domain) => {
-    return adblockManager.getStatsForDomain(domain, tabManager.profileId);
+    if (domain !== undefined && typeof domain !== "string") {
+      return adblockManager.getStatsForDomain("", tabManager.profileId);
+    }
+    return adblockManager.getStatsForDomain(domain || "", tabManager.profileId);
   });
 
   ipcMain.handle("adblock:toggleSite", async (_event, domain) => {
+    if (!domain || typeof domain !== "string") {
+      const isGlobal = adblockManager.isGlobalEnabled(tabManager.profileId);
+      return {
+        enabled: false,
+        siteEnabled: false,
+        isEffectiveEnabled: false,
+        isGlobalEnabled: isGlobal,
+        globalEnabled: isGlobal,
+        isAllowlisted: false,
+        domain: "",
+        blockedCount: 0
+      };
+    }
     return adblockManager.toggleSite(domain, tabManager.profileId);
   });
 

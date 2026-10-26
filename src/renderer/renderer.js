@@ -310,8 +310,13 @@ async function updateShieldStateForTab(activeTab) {
     shieldBadge.dataset.count = String(count);
     shieldBadge.hidden = count === 0;
 
-    const isActive = Boolean(stats.siteEnabled ?? stats.isEnabled);
-    if (isActive) {
+    const isGlobal = Boolean(stats.isGlobalEnabled ?? stats.globalEnabled ?? true);
+    const isEffective = Boolean(stats.isEffectiveEnabled ?? stats.siteEnabled ?? stats.isEnabled);
+
+    if (!isGlobal) {
+      shieldButton.innerHTML = ICONS.shieldDisabled;
+      shieldButton.title = "Aero Shields disabled globally";
+    } else if (isEffective) {
       shieldButton.innerHTML = ICONS.shieldActive;
       shieldButton.title = `Aero Shields: ${count} ads & trackers blocked`;
     } else {
@@ -436,6 +441,51 @@ menuButton.addEventListener("click", () => {
   window.aero.showAppMenu();
 });
 
+// Omnibox Click-to-Select & Focus handling
+let isFirstOmniboxClick = false;
+
+addressInput.addEventListener("mousedown", () => {
+  if (document.activeElement !== addressInput) {
+    isFirstOmniboxClick = true;
+    const selectOnMouseUp = (e) => {
+      if (isFirstOmniboxClick) {
+        e.preventDefault();
+        addressInput.select();
+        isFirstOmniboxClick = false;
+      }
+      window.removeEventListener("mouseup", selectOnMouseUp, true);
+    };
+    window.addEventListener("mouseup", selectOnMouseUp, true);
+  }
+});
+
+addressInput.addEventListener("focus", () => {
+  window.requestAnimationFrame(() => {
+    if (document.activeElement === addressInput && addressInput.selectionStart === addressInput.selectionEnd) {
+      addressInput.select();
+    }
+  });
+});
+
+addressInput.addEventListener("blur", () => {
+  isFirstOmniboxClick = false;
+  autocompleteDropdown.hidden = true;
+  const active = tabs.find(t => t.id === activeTabId);
+  if (active) {
+    addressInput.value = active.url || "aero://newtab";
+  }
+});
+
+const addressBar = $("#addressBar");
+if (addressBar) {
+  addressBar.addEventListener("click", e => {
+    if (e.target !== addressInput && !securityBadge.contains(e.target) && !bookmarkButton.contains(e.target)) {
+      addressInput.focus();
+      addressInput.select();
+    }
+  });
+}
+
 // Omnibox Navigation Submission
 addressInput.addEventListener("keydown", event => {
   if (event.key === "Enter") {
@@ -447,6 +497,7 @@ addressInput.addEventListener("keydown", event => {
       addressInput.blur();
     }
   } else if (event.key === "Escape") {
+    event.preventDefault();
     const active = tabs.find(t => t.id === activeTabId);
     addressInput.value = active ? (active.url || "aero://newtab") : "aero://newtab";
     autocompleteDropdown.hidden = true;
@@ -544,13 +595,23 @@ shieldButton.addEventListener("click", async () => {
       siteDomainEl.textContent = domain;
       const stats = await window.aero.adblockGetStats(domain);
       const count = stats.blockedCount ?? stats.siteBlocked ?? 0;
-      const isActive = Boolean(stats.siteEnabled ?? stats.isEnabled);
+      const isGlobal = Boolean(stats.isGlobalEnabled ?? stats.globalEnabled ?? true);
+      const isAllowlisted = Boolean(stats.isAllowlisted);
+      const isEffective = Boolean(stats.isEffectiveEnabled ?? stats.siteEnabled ?? stats.isEnabled);
+
       blockedCountEl.textContent = String(count);
-      toggleEl.checked = isActive;
-      toggleEl.disabled = false;
-      statusTextEl.textContent = isActive
-        ? "Shields active: blocking ads & trackers"
-        : "Shields disabled for this site";
+
+      if (!isGlobal) {
+        toggleEl.checked = false;
+        toggleEl.disabled = true;
+        statusTextEl.textContent = "Shields disabled globally (in Settings)";
+      } else {
+        toggleEl.checked = !isAllowlisted;
+        toggleEl.disabled = false;
+        statusTextEl.textContent = isEffective
+          ? "Shields active: blocking ads & trackers"
+          : "Shields disabled for this site";
+      }
     } else {
       siteDomainEl.textContent = "Aero System";
       blockedCountEl.textContent = "0";
@@ -566,14 +627,28 @@ $("#shieldSiteToggle").addEventListener("change", async () => {
   if (!active || !active.url || active.url.startsWith("aero://")) return;
 
   const domain = getDomain(active.url);
-  const res = await window.aero.adblockToggleSite(domain);
-  const isEnabled = typeof res === "object" ? Boolean(res.enabled ?? res.siteEnabled) : Boolean(res);
-  const statusTextEl = $("#shieldStatusText");
-  statusTextEl.textContent = isEnabled
-    ? "Shields active: blocking ads & trackers"
-    : "Shields disabled for this site";
-  notify(isEnabled ? `Aero Shields enabled for ${domain}` : `Aero Shields disabled for ${domain}`);
-  updateShieldStateForTab(active);
+  const toggleEl = $("#shieldSiteToggle");
+  try {
+    const res = await window.aero.adblockToggleSite(domain);
+    const isGlobal = Boolean(res.isGlobalEnabled ?? res.globalEnabled ?? true);
+    const isAllowlisted = Boolean(res.isAllowlisted);
+    const isEffective = Boolean(res.isEffectiveEnabled ?? res.siteEnabled ?? res.enabled);
+
+    toggleEl.checked = !isAllowlisted;
+    const statusTextEl = $("#shieldStatusText");
+    if (!isGlobal) {
+      statusTextEl.textContent = "Shields disabled globally (in Settings)";
+    } else {
+      statusTextEl.textContent = isEffective
+        ? "Shields active: blocking ads & trackers"
+        : "Shields disabled for this site";
+      notify(isEffective ? `Aero Shields enabled for ${domain}` : `Aero Shields disabled for ${domain}`);
+    }
+    updateShieldStateForTab(active);
+  } catch {
+    toggleEl.checked = !toggleEl.checked;
+    notify("Failed to update site shields settings");
+  }
 });
 
 // --- SECURITY DETAILS DRAWER ---
@@ -878,8 +953,18 @@ async function renderSettingsView() {
     `;
 
     $("#setAdblockGlobal").addEventListener("change", async () => {
-      const res = await window.aero.adblockToggleGlobal();
-      notify(res.enabled ? "Aero Shields enabled globally" : "Aero Shields disabled globally");
+      const checkbox = $("#setAdblockGlobal");
+      try {
+        const res = await window.aero.adblockToggleGlobal();
+        const enabled = Boolean(res.isGlobalEnabled ?? res.globalEnabled ?? res.enabled);
+        checkbox.checked = enabled;
+        notify(enabled ? "Aero Shields enabled globally" : "Aero Shields disabled globally");
+        const active = tabs.find(t => t.id === activeTabId);
+        if (active) updateShieldStateForTab(active);
+      } catch {
+        checkbox.checked = !checkbox.checked;
+        notify("Failed to update global shields setting");
+      }
     });
   } else if (activeSettingsTab === "privacy") {
     container.innerHTML = `
@@ -957,13 +1042,16 @@ async function renderSettingsView() {
           <div class="settings-row"><span>Close Tab</span><strong>Ctrl+W</strong></div>
           <div class="settings-row"><span>Restore Closed Tab</span><strong>Ctrl+Shift+T</strong></div>
           <div class="settings-row"><span>Next / Previous Tab</span><strong>Ctrl+Tab / Ctrl+Shift+Tab</strong></div>
-          <div class="settings-row"><span>Focus Omnibox</span><strong>Ctrl+L</strong></div>
-          <div class="settings-row"><span>Reload Page</span><strong>Ctrl+R</strong></div>
+          <div class="settings-row"><span>Select Tab 1–8 / Last Tab</span><strong>Ctrl+1–8 / Ctrl+9</strong></div>
+          <div class="settings-row"><span>Focus Omnibox</span><strong>Ctrl+L / Alt+D / F6</strong></div>
+          <div class="settings-row"><span>Reload / Hard Reload</span><strong>Ctrl+R (F5) / Ctrl+Shift+R</strong></div>
           <div class="settings-row"><span>Bookmark Current Page</span><strong>Ctrl+D</strong></div>
           <div class="settings-row"><span>Find in Page</span><strong>Ctrl+F</strong></div>
           <div class="settings-row"><span>History</span><strong>Ctrl+H</strong></div>
           <div class="settings-row"><span>Downloads</span><strong>Ctrl+J</strong></div>
+          <div class="settings-row"><span>Clear Browsing Data</span><strong>Ctrl+Shift+Delete</strong></div>
           <div class="settings-row"><span>Navigate Back / Forward</span><strong>Alt+Left / Alt+Right</strong></div>
+          <div class="settings-row"><span>Toggle Fullscreen</span><strong>F11</strong></div>
         </div>
       </div>
     `;
@@ -1232,58 +1320,134 @@ $("#clearDownloadsPage")?.addEventListener("click", async () => {
   notify("Downloads list cleared");
 });
 
-// Global Keyboard Shortcuts
+// Global Keyboard Shortcuts (for when renderer chrome is focused)
 document.addEventListener("keydown", event => {
   const mod = event.ctrlKey || event.metaKey;
+  const key = event.key.toLowerCase();
 
-  if (mod && event.key.toLowerCase() === "t") {
-    if (event.shiftKey) {
-      event.preventDefault();
-      window.aero.restoreClosedTab();
-    } else {
-      event.preventDefault();
-      window.aero.newTab();
-    }
-  } else if (mod && event.key.toLowerCase() === "w") {
+  // Navigation: Alt+Left, Alt+Right
+  if (event.altKey && !mod && (event.key === "ArrowLeft" || event.key === "Left")) {
     event.preventDefault();
-    if (activeTabId) window.aero.closeTab(activeTabId);
-  } else if (mod && event.key.toLowerCase() === "l") {
+    window.aero.navigationAction("back");
+    return;
+  }
+  if (event.altKey && !mod && (event.key === "ArrowRight" || event.key === "Right")) {
+    event.preventDefault();
+    window.aero.navigationAction("forward");
+    return;
+  }
+
+  // Reload: Ctrl+R, F5, Ctrl+Shift+R
+  if ((mod && !event.altKey && key === "r") || event.key === "F5") {
+    event.preventDefault();
+    if (event.shiftKey) {
+      window.aero.navigationAction("reload-ignoring-cache");
+    } else {
+      window.aero.navigationAction("reload");
+    }
+    return;
+  }
+
+  // Address bar: Ctrl+L, Alt+D, F6
+  if ((mod && !event.altKey && !event.shiftKey && key === "l") ||
+      (event.altKey && !mod && !event.shiftKey && key === "d") ||
+      (event.key === "F6" && !mod && !event.altKey && !event.shiftKey)) {
     event.preventDefault();
     addressInput.focus();
     addressInput.select();
-  } else if (mod && event.key.toLowerCase() === "r") {
+    return;
+  }
+
+  // Tabs: Ctrl+T, Ctrl+W, Ctrl+Shift+T, Ctrl+Tab, Ctrl+1..9
+  if (mod && !event.altKey && key === "t") {
     event.preventDefault();
-    window.aero.navigationAction("reload");
-  } else if (mod && event.key.toLowerCase() === "d") {
+    if (event.shiftKey) {
+      window.aero.restoreClosedTab();
+    } else {
+      window.aero.newTab();
+    }
+    return;
+  }
+  if (mod && !event.altKey && !event.shiftKey && key === "w") {
     event.preventDefault();
-    bookmarkButton.click();
-  } else if (mod && event.key.toLowerCase() === "f") {
-    event.preventDefault();
-    findButton.click();
-  } else if (mod && event.key.toLowerCase() === "h") {
-    event.preventDefault();
-    window.aero.navigate("aero://history");
-  } else if (mod && event.key.toLowerCase() === "j") {
-    event.preventDefault();
-    window.aero.navigate("aero://downloads");
-  } else if (mod && event.key === "Tab") {
+    if (activeTabId) window.aero.closeTab(activeTabId);
+    return;
+  }
+  if (mod && !event.altKey && event.key === "Tab") {
     event.preventDefault();
     if (tabs.length > 1) {
       const idx = tabs.findIndex(t => t.id === activeTabId);
       const nextIdx = event.shiftKey ? (idx - 1 + tabs.length) % tabs.length : (idx + 1) % tabs.length;
       window.aero.activateTab(tabs[nextIdx].id);
     }
-  } else if (event.altKey && event.key === "ArrowLeft") {
-    window.aero.navigationAction("back");
-  } else if (event.altKey && event.key === "ArrowRight") {
-    window.aero.navigationAction("forward");
-  } else if (event.key === "Escape") {
+    return;
+  }
+  if (mod && !event.altKey && !event.shiftKey && /^[1-8]$/.test(event.key)) {
+    event.preventDefault();
+    const targetIdx = parseInt(event.key, 10) - 1;
+    if (targetIdx < tabs.length) {
+      window.aero.activateTab(tabs[targetIdx].id);
+    }
+    return;
+  }
+  if (mod && !event.altKey && !event.shiftKey && event.key === "9") {
+    event.preventDefault();
+    if (tabs.length > 0) {
+      window.aero.activateTab(tabs[tabs.length - 1].id);
+    }
+    return;
+  }
+
+  // Other: Ctrl+D, Ctrl+F, Ctrl+H, Ctrl+J, Ctrl+Shift+Delete, F11
+  if (mod && !event.altKey && !event.shiftKey && key === "d") {
+    event.preventDefault();
+    bookmarkButton.click();
+    return;
+  }
+  if (mod && !event.altKey && !event.shiftKey && key === "f") {
+    event.preventDefault();
+    findButton.click();
+    return;
+  }
+  if (mod && !event.altKey && !event.shiftKey && key === "h") {
+    event.preventDefault();
+    window.aero.navigate("aero://history");
+    return;
+  }
+  if (mod && !event.altKey && !event.shiftKey && key === "j") {
+    event.preventDefault();
+    window.aero.navigate("aero://downloads");
+    return;
+  }
+  if (mod && !event.altKey && event.shiftKey && (event.key === "Delete" || event.key === "Del")) {
+    event.preventDefault();
+    settingsButton.click();
+    setTimeout(() => {
+      const privBtn = $("#tab-privacy");
+      if (privBtn) privBtn.click();
+    }, 50);
+    return;
+  }
+  if (event.key === "F11" && !mod && !event.altKey && !event.shiftKey) {
+    event.preventDefault();
+    const maxBtn = $("#maxWindow");
+    if (maxBtn) maxBtn.click();
+    return;
+  }
+
+  // Escape key: close popovers, drawers, find row, cancel omnibox edit
+  if (event.key === "Escape") {
     autocompleteDropdown.hidden = true;
     shieldDrawer.hidden = true;
     securityDrawer.hidden = true;
     if (!findRow.hidden) {
       findRow.hidden = true;
       window.aero.stopFindInPage("clearSelection");
+    }
+    if (document.activeElement === addressInput) {
+      const active = tabs.find(t => t.id === activeTabId);
+      addressInput.value = active ? (active.url || "aero://newtab") : "aero://newtab";
+      addressInput.blur();
     }
     updateChromeHeight();
   }
@@ -1343,13 +1507,21 @@ window.aero.onAdblockStatsUpdated(stats => {
   const active = tabs.find(t => t.id === activeTabId);
   const currentDomain = active && active.url ? getDomain(active.url) : "";
 
-  if (currentDomain && stats.domain && currentDomain === stats.domain) {
+  const normCurrent = currentDomain.toLowerCase().replace(/^www\./, "");
+  const normStats = (stats.domain || "").toLowerCase().replace(/^www\./, "");
+
+  if (normCurrent && normStats && (normCurrent === normStats || currentDomain === stats.domain)) {
     shieldBadge.textContent = count > 0 ? String(count) : "";
     shieldBadge.dataset.count = String(count);
     shieldBadge.hidden = count === 0;
 
-    const isActive = Boolean(stats.siteEnabled ?? stats.isEnabled);
-    if (isActive) {
+    const isGlobal = Boolean(stats.isGlobalEnabled ?? stats.globalEnabled ?? true);
+    const isEffective = Boolean(stats.isEffectiveEnabled ?? stats.siteEnabled ?? stats.isEnabled);
+
+    if (!isGlobal) {
+      shieldButton.innerHTML = ICONS.shieldDisabled;
+      shieldButton.title = "Aero Shields disabled globally";
+    } else if (isEffective) {
       shieldButton.innerHTML = ICONS.shieldActive;
       shieldButton.title = `Aero Shields: ${count} ads & trackers blocked`;
     } else {
@@ -1359,10 +1531,17 @@ window.aero.onAdblockStatsUpdated(stats => {
 
     if (!shieldDrawer.hidden) {
       $("#shieldBlockedCount").textContent = String(count);
-      $("#shieldSiteToggle").checked = isActive;
-      $("#shieldStatusText").textContent = isActive
-        ? "Shields active: blocking ads & trackers"
-        : "Shields disabled for this site";
+      if (!isGlobal) {
+        $("#shieldSiteToggle").checked = false;
+        $("#shieldSiteToggle").disabled = true;
+        $("#shieldStatusText").textContent = "Shields disabled globally (in Settings)";
+      } else {
+        $("#shieldSiteToggle").checked = !stats.isAllowlisted;
+        $("#shieldSiteToggle").disabled = false;
+        $("#shieldStatusText").textContent = isEffective
+          ? "Shields active: blocking ads & trackers"
+          : "Shields disabled for this site";
+      }
     }
   }
 });
@@ -1377,6 +1556,47 @@ if (window.aero.onAdblockGlobalUpdated) {
 window.aero.onTriggerFind(() => {
   findButton.click();
 });
+
+if (window.aero.onFocusOmnibox) {
+  window.aero.onFocusOmnibox(() => {
+    addressInput.focus();
+    addressInput.select();
+  });
+}
+
+if (window.aero.onTriggerBookmark) {
+  window.aero.onTriggerBookmark(() => {
+    bookmarkButton.click();
+  });
+}
+
+if (window.aero.onOpenClearData) {
+  window.aero.onOpenClearData(() => {
+    settingsButton.click();
+    setTimeout(() => {
+      const privBtn = $("#tab-privacy");
+      if (privBtn) privBtn.click();
+    }, 50);
+  });
+}
+
+if (window.aero.onActionEscape) {
+  window.aero.onActionEscape(() => {
+    autocompleteDropdown.hidden = true;
+    shieldDrawer.hidden = true;
+    securityDrawer.hidden = true;
+    if (!findRow.hidden) {
+      findRow.hidden = true;
+      window.aero.stopFindInPage("clearSelection");
+    }
+    if (document.activeElement === addressInput) {
+      const active = tabs.find(t => t.id === activeTabId);
+      addressInput.value = active ? (active.url || "aero://newtab") : "aero://newtab";
+      addressInput.blur();
+    }
+    updateChromeHeight();
+  });
+}
 
 // Initial App Bootstrapping
 (async () => {

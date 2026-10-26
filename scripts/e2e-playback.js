@@ -25,15 +25,7 @@ async function runTests() {
   const ses = session.fromPartition("persist:aero-e2e-test");
   adblockManager.enableInSession(ses, "default");
 
-  const allowedMediaUrls = [];
 
-  // Monitor web requests
-  ses.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
-    if (details.url.includes(".googlevideo.com/") || details.resourceType === "media") {
-      allowedMediaUrls.push(details.url);
-    }
-    callback({});
-  });
 
   const win = new BrowserWindow({
     width: 1280,
@@ -203,9 +195,57 @@ async function runTests() {
     assertTest(statsOn.isAllowlisted === false && statsOn.isEnabled === true, "Stats reflect shields active");
 
     // -------------------------------------------------------------
-    // TEST 5: HTML5 Video Playback on Standard Web
+    // TEST 5: YouTube In-Stream Ad Skipping & Acceleration
     // -------------------------------------------------------------
-    console.log("\n--- TEST 5: Standard HTML5 Video Playback ---");
+    console.log("\n--- TEST 5: YouTube In-Stream Ad Skipping ---");
+    await safeLoad(wc, "https://www.youtube.com/watch?v=M7lc1UVf-VE");
+    await sleep(4000);
+
+    const skipperActive = await wc.executeJavaScript(`Boolean(window.__aero_yt_interval)`);
+    assertTest(skipperActive, "Aero YouTube ad skipper interval is active in page");
+
+    // Simulate ad appearance on player
+    const adSimResult = await wc.executeJavaScript(`
+      (async () => {
+        const player = document.getElementById('movie_player');
+        const video = document.querySelector('video');
+        if (!player || !video) return { error: "no player or video" };
+
+        const initialRate = video.playbackRate;
+        const initialMuted = video.muted;
+
+        // Trigger ad-showing state
+        player.classList.add('ad-showing');
+        await new Promise(r => setTimeout(r, 200));
+
+        const rateDuringAd = video.playbackRate;
+        const mutedDuringAd = video.muted;
+
+        // Ad finishes
+        player.classList.remove('ad-showing');
+        await new Promise(r => setTimeout(r, 200));
+
+        const rateAfterAd = video.playbackRate;
+        const mutedAfterAd = video.muted;
+
+        return {
+          rateDuringAd,
+          mutedDuringAd,
+          rateAfterAd,
+          mutedAfterAd
+        };
+      })()
+    `);
+
+    assertTest(adSimResult.rateDuringAd === 16, "Ad acceleration activated (playbackRate=16)", `rate=${adSimResult.rateDuringAd}`);
+    assertTest(adSimResult.mutedDuringAd === true, "Ad audio muted automatically to prevent bleed", `muted=${adSimResult.mutedDuringAd}`);
+    assertTest(adSimResult.rateAfterAd === 1.0, "Normal playback rate restored after ad completes", `rate=${adSimResult.rateAfterAd}`);
+    assertTest(adSimResult.mutedAfterAd === false, "Audio restored after ad completes", `muted=${adSimResult.mutedAfterAd}`);
+
+    // -------------------------------------------------------------
+    // TEST 6: HTML5 Video Playback on Standard Web
+    // -------------------------------------------------------------
+    console.log("\n--- TEST 6: Standard HTML5 Video Playback ---");
     await safeLoad(wc, "data:text/html," + encodeURIComponent(`
       <!DOCTYPE html>
       <html>

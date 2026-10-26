@@ -211,6 +211,14 @@ class TabManager {
       return { action: "deny" };
     });
 
+    // Intercept keyboard shortcuts while web content has focus
+    wc.on("before-input-event", (event, input) => {
+      const handled = this.handleShortcut(input);
+      if (handled) {
+        event.preventDefault();
+      }
+    });
+
     wc.on("page-title-updated", (_event, title) => {
       tab.title = title || "New Tab";
       this.publishTabs();
@@ -249,6 +257,7 @@ class TabManager {
       if (!isPrivate) {
         store.addHistory({ title: tab.title, url }, this.profileId);
       }
+      adblockManager.injectCosmeticStyles(wc, url, this.profileId);
       this.publishTabs();
     });
 
@@ -485,6 +494,13 @@ class TabManager {
       case "reload":
         wc.reload();
         break;
+      case "reload-ignoring-cache":
+        if (typeof wc.reloadIgnoringCache === "function") {
+          wc.reloadIgnoringCache();
+        } else {
+          wc.reload();
+        }
+        break;
       case "stop":
         wc.stop();
         break;
@@ -498,6 +514,158 @@ class TabManager {
         return false;
     }
     return true;
+  }
+
+  activateTabByIndex(index) {
+    const tabList = [...this.tabs.keys()];
+    if (tabList.length === 0) return false;
+    const targetIdx = Math.max(0, Math.min(index, tabList.length - 1));
+    return this.activateTab(tabList[targetIdx]);
+  }
+
+  activateLastTab() {
+    const tabList = [...this.tabs.keys()];
+    if (tabList.length === 0) return false;
+    return this.activateTab(tabList[tabList.length - 1]);
+  }
+
+  activateNextTab() {
+    const tabList = [...this.tabs.keys()];
+    if (tabList.length <= 1) return false;
+    const currIdx = tabList.indexOf(this.activeTabId);
+    const nextIdx = (currIdx + 1) % tabList.length;
+    return this.activateTab(tabList[nextIdx]);
+  }
+
+  activatePreviousTab() {
+    const tabList = [...this.tabs.keys()];
+    if (tabList.length <= 1) return false;
+    const currIdx = tabList.indexOf(this.activeTabId);
+    const prevIdx = (currIdx - 1 + tabList.length) % tabList.length;
+    return this.activateTab(tabList[prevIdx]);
+  }
+
+  handleShortcut(input) {
+    if (!input || input.type !== "keyDown") return false;
+
+    const isCtrlOrCmd = process.platform === "darwin" ? Boolean(input.meta) : Boolean(input.control);
+    const isAlt = Boolean(input.alt);
+    const isShift = Boolean(input.shift);
+    const key = (input.key || "").toLowerCase();
+
+    // 1. Navigation shortcuts
+    // Alt + Left: Back
+    if (isAlt && !isCtrlOrCmd && (input.key === "ArrowLeft" || input.code === "ArrowLeft")) {
+      this.navigationAction("back");
+      return true;
+    }
+    // Alt + Right: Forward
+    if (isAlt && !isCtrlOrCmd && (input.key === "ArrowRight" || input.code === "ArrowRight")) {
+      this.navigationAction("forward");
+      return true;
+    }
+    // Ctrl + R or F5: Reload (with Shift for hard reload)
+    if ((isCtrlOrCmd && !isAlt && key === "r") || input.key === "F5") {
+      if (isShift || (input.key === "F5" && isCtrlOrCmd)) {
+        this.navigationAction("reload-ignoring-cache");
+      } else {
+        this.navigationAction("reload");
+      }
+      return true;
+    }
+    // Escape: Stop loading or cancel omnibox editing
+    if (input.key === "Escape" && !isCtrlOrCmd && !isAlt && !isShift) {
+      const active = this.getActiveTab();
+      if (active && active.loading) {
+        this.navigationAction("stop");
+        return true;
+      }
+      this.sendToRenderer("action:escape");
+      return true;
+    }
+
+    // 2. Address bar shortcuts (Ctrl+L, Alt+D, F6)
+    if (
+      (isCtrlOrCmd && !isAlt && !isShift && key === "l") ||
+      (isAlt && !isCtrlOrCmd && !isShift && key === "d") ||
+      (input.key === "F6" && !isCtrlOrCmd && !isAlt && !isShift)
+    ) {
+      this.sendToRenderer("action:focus-omnibox");
+      return true;
+    }
+
+    // 3. Tab management shortcuts
+    // Ctrl + T: New tab
+    if (isCtrlOrCmd && !isAlt && !isShift && key === "t") {
+      this.createTab("aero://newtab", true);
+      return true;
+    }
+    // Ctrl + W: Close current tab
+    if (isCtrlOrCmd && !isAlt && !isShift && key === "w") {
+      if (this.activeTabId) this.closeTab(this.activeTabId);
+      return true;
+    }
+    // Ctrl + Shift + T: Reopen closed tab
+    if (isCtrlOrCmd && !isAlt && isShift && key === "t") {
+      this.restoreClosedTab();
+      return true;
+    }
+    // Ctrl + Tab / Ctrl + Shift + Tab: Switch tabs
+    if (isCtrlOrCmd && !isAlt && (input.key === "Tab" || input.code === "Tab")) {
+      if (isShift) {
+        this.activatePreviousTab();
+      } else {
+        this.activateNextTab();
+      }
+      return true;
+    }
+    // Ctrl + 1..8: Select corresponding tab
+    if (isCtrlOrCmd && !isAlt && !isShift && /^[1-8]$/.test(input.key)) {
+      const index = parseInt(input.key, 10) - 1;
+      this.activateTabByIndex(index);
+      return true;
+    }
+    // Ctrl + 9: Select last tab
+    if (isCtrlOrCmd && !isAlt && !isShift && input.key === "9") {
+      this.activateLastTab();
+      return true;
+    }
+
+    // 4. Other shortcuts
+    // Ctrl + D: Bookmark current page
+    if (isCtrlOrCmd && !isAlt && !isShift && key === "d") {
+      this.sendToRenderer("action:trigger-bookmark");
+      return true;
+    }
+    // Ctrl + F: Find in page
+    if (isCtrlOrCmd && !isAlt && !isShift && key === "f") {
+      this.sendToRenderer("action:trigger-find");
+      return true;
+    }
+    // Ctrl + H: History
+    if (isCtrlOrCmd && !isAlt && !isShift && key === "h") {
+      this.navigate("aero://history");
+      return true;
+    }
+    // Ctrl + J: Downloads
+    if (isCtrlOrCmd && !isAlt && !isShift && key === "j") {
+      this.navigate("aero://downloads");
+      return true;
+    }
+    // Ctrl + Shift + Delete: Clear browsing data
+    if (isCtrlOrCmd && !isAlt && isShift && (input.key === "Delete" || input.code === "Delete")) {
+      this.sendToRenderer("action:open-clear-data");
+      return true;
+    }
+    // F11: Toggle fullscreen
+    if (input.key === "F11" && !isCtrlOrCmd && !isAlt && !isShift) {
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+        this.mainWindow.setFullScreen(!this.mainWindow.isFullScreen());
+      }
+      return true;
+    }
+
+    return false;
   }
 
   setZoom(factor) {

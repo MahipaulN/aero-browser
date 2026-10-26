@@ -109,32 +109,53 @@ class AdBlockManager {
   async toggleSite(domain, profileId = "default") {
     const cleanDomain = normalizeHostname(domain);
     if (!cleanDomain) {
-      return { enabled: false, siteEnabled: false, domain: "", blockedCount: 0 };
+      const isGlobal = this.isGlobalEnabled(profileId);
+      return {
+        enabled: false,
+        siteEnabled: false,
+        isEffectiveEnabled: false,
+        isGlobalEnabled: isGlobal,
+        globalEnabled: isGlobal,
+        isAllowlisted: false,
+        domain: "",
+        blockedCount: 0
+      };
     }
     const settings = store.getSettings(profileId);
     const rawList = Array.isArray(settings.adblockAllowlist) ? [...settings.adblockAllowlist] : [];
     const allowlist = rawList.map(d => normalizeHostname(d)).filter(Boolean);
 
-    const idx = allowlist.indexOf(cleanDomain);
+    const isAlreadyAllowlisted = this.isDomainAllowlisted(cleanDomain, profileId);
     let allowedNow = false;
-    if (idx >= 0) {
-      // Remove from allowlist -> shields UP (blocking active)
-      allowlist.splice(idx, 1);
+
+    if (isAlreadyAllowlisted) {
+      // Remove matching entries -> shields UP (blocking active)
+      const filtered = allowlist.filter(d => {
+        return d !== cleanDomain && !cleanDomain.endsWith("." + d) && d !== cleanDomain.replace(/^www\./, "");
+      });
+      await store.updateSettings({ adblockAllowlist: filtered }, profileId);
       allowedNow = false;
     } else {
       // Add to allowlist -> shields DOWN (allowed)
-      allowlist.push(cleanDomain);
+      if (!allowlist.includes(cleanDomain)) {
+        allowlist.push(cleanDomain);
+      }
+      await store.updateSettings({ adblockAllowlist: allowlist }, profileId);
       allowedNow = true;
     }
 
-    await store.updateSettings({ adblockAllowlist: allowlist }, profileId);
-    const isNowActive = !allowedNow;
+    const isGlobal = this.isGlobalEnabled(profileId);
+    const effectiveEnabled = isGlobal && !allowedNow;
     const count = this.siteStats.get(cleanDomain) || 0;
     this.notifyStats(cleanDomain, profileId, true);
 
     return {
-      enabled: isNowActive,
-      siteEnabled: isNowActive,
+      enabled: effectiveEnabled,
+      siteEnabled: effectiveEnabled,
+      isEffectiveEnabled: effectiveEnabled,
+      isGlobalEnabled: isGlobal,
+      globalEnabled: isGlobal,
+      isAllowlisted: allowedNow,
       domain: cleanDomain,
       blockedCount: count
     };
@@ -144,10 +165,15 @@ class AdBlockManager {
     const current = this.isGlobalEnabled(profileId);
     const updated = !current;
     await store.updateSettings({ adblockEnabled: updated }, profileId);
-    this.sendToRenderer("adblock:global-updated", updated);
+    this.sendToRenderer("adblock:global-updated", {
+      isGlobalEnabled: updated,
+      globalEnabled: updated,
+      enabled: updated
+    });
     return {
       enabled: updated,
-      globalEnabled: updated
+      globalEnabled: updated,
+      isGlobalEnabled: updated
     };
   }
 
@@ -176,14 +202,15 @@ class AdBlockManager {
     const blockedCount = cleanDomain ? (this.siteStats.get(cleanDomain) || 0) : 0;
     const isGlobal = this.isGlobalEnabled(profileId);
     const isAllowlisted = cleanDomain ? this.isDomainAllowlisted(cleanDomain, profileId) : false;
-    const isEnabled = isGlobal && !isAllowlisted;
+    const effectiveEnabled = isGlobal && !isAllowlisted;
 
     return {
       domain: cleanDomain,
       blockedCount,
       siteBlocked: blockedCount,
-      isEnabled,
-      siteEnabled: isEnabled,
+      isEnabled: effectiveEnabled,
+      siteEnabled: effectiveEnabled,
+      isEffectiveEnabled: effectiveEnabled,
       isGlobalEnabled: isGlobal,
       globalEnabled: isGlobal,
       isAllowlisted,
@@ -231,7 +258,12 @@ class AdBlockManager {
       url.includes("pubads.g.doubleclick.net") ||
       url.includes("securepubads.g.doubleclick.net") ||
       url.includes("play.google.com/log?format=json") ||
-      url.includes("/ptracking?adformat=")
+      url.includes("/ptracking?adformat=") ||
+      url.includes("/api/stats/playback?adformat=") ||
+      url.includes("/api/stats/watchtime?adformat=") ||
+      url.includes("youtube.com/api/stats/qoe?adformat=") ||
+      url.includes("adservice.google.com") ||
+      url.includes("pagead2.googlesyndication.com")
     );
   }
 
@@ -365,7 +397,7 @@ class AdBlockManager {
           const req = Request.fromRawDetails({
             requestId: `${details.id}`,
             url: details.url,
-            sourceUrl: details.referrer || (siteDomain ? `https://${siteDomain}/` : details.url),
+            sourceUrl: details.referrer || details.initiator || (siteDomain ? `https://${siteDomain}/` : details.url),
             type: details.resourceType || "other"
           });
 
@@ -422,17 +454,42 @@ class AdBlockManager {
   async injectCosmeticStyles(wc, url, profileId = "default") {
     if (!wc || wc.isDestroyed() || !url) return;
 
-    if (!this.isGlobalEnabled(profileId)) return;
-    const host = normalizeHostname(url);
-    if (host && this.isDomainAllowlisted(host, profileId)) return;
+    if (!this.isGlobalEnabled(profileId)) {
+      if (url.includes("youtube.com")) {
+        try {
+          await wc.executeJavaScript(`
+            if (window.__aero_yt_interval) {
+              clearInterval(window.__aero_yt_interval);
+              window.__aero_yt_interval = null;
+            }
+          `, true);
+        } catch {}
+      }
+      return;
+    }
 
-    // Tailored, non-destructive CSS hiding for YouTube ad banners and overlay slots
+    const host = normalizeHostname(url);
+    if (host && this.isDomainAllowlisted(host, profileId)) {
+      if (url.includes("youtube.com")) {
+        try {
+          await wc.executeJavaScript(`
+            if (window.__aero_yt_interval) {
+              clearInterval(window.__aero_yt_interval);
+              window.__aero_yt_interval = null;
+            }
+          `, true);
+        } catch {}
+      }
+      return;
+    }
+
+    // Tailored, non-destructive CSS hiding for YouTube ad banners, sponsored slots, and video cards
     if (url.includes("youtube.com")) {
       try {
         await wc.insertCSS(`
           .ytp-ad-overlay-container,
           .ytp-ad-message-container,
-          .video-ads,
+          .ytp-ad-action-interstitial,
           ytd-ad-slot-renderer,
           #player-ads,
           ytd-banner-promo-renderer,
@@ -442,28 +499,92 @@ class AdBlockManager {
           ytd-display-ad-renderer,
           ytd-statement-banner-renderer,
           ytd-ad-hover-text-button-renderer,
+          ytd-brand-video-singleton-renderer,
           #masthead-ad,
-          .ytp-ad-progress-list {
+          .ytp-ad-progress-list,
+          ytd-rich-item-renderer:has(ytd-ad-slot-renderer),
+          ytd-rich-item-renderer:has([aria-label="Sponsored"]),
+          ytd-rich-item-renderer:has(.ytd-in-feed-ad-layout-renderer),
+          ytd-rich-section-renderer:has(ytd-statement-banner-renderer),
+          ytd-rich-section-renderer:has(ytd-brand-video-singleton-renderer),
+          ytd-video-renderer:has(ytd-ad-slot-renderer),
+          ytd-video-renderer:has([aria-label="Sponsored"]),
+          tp-yt-paper-dialog:has(ytd-mealbar-promo-renderer),
+          ytd-mealbar-promo-renderer {
             display: none !important;
           }
         `, { cssOrigin: "user" });
 
-        // Event-driven auto-skip for in-stream ads (clicks native skip button without polling or jumping content)
+        // Reliable background auto-skip and ad-acceleration for in-stream ads
         await wc.executeJavaScript(`
           (() => {
-            if (window.__aero_yt_ad_handler) return;
-            window.__aero_yt_ad_handler = true;
-            const trySkip = () => {
-              const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, button.ytp-ad-skip-button-text');
-              if (skipBtn) skipBtn.click();
+            if (window.__aero_yt_interval) {
+              clearInterval(window.__aero_yt_interval);
+            }
+
+            let wasAdShowing = false;
+            let originalMuted = false;
+
+            const checkAndSkipAd = () => {
+              const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+              if (!player) return;
+
+              const isAd = player.classList.contains('ad-showing') ||
+                           player.classList.contains('ad-interrupting') ||
+                           (typeof player.getAdState === 'function' && player.getAdState() > 0);
+
+              const video = player.querySelector('video.html5-main-video') || player.querySelector('video') || document.querySelector('video');
+
+              if (isAd) {
+                // 1. Mute ad immediately to prevent audio bleed in the background
+                if (video) {
+                  if (!wasAdShowing) {
+                    wasAdShowing = true;
+                    originalMuted = video.muted;
+                    video.muted = true;
+                  }
+                  video.playbackRate = 16;
+                  if (Number.isFinite(video.duration) && video.duration > 0) {
+                    video.currentTime = video.duration;
+                  }
+                }
+
+                // 2. Click native skip button immediately if available
+                const skipSelectors = [
+                  '.ytp-ad-skip-button',
+                  '.ytp-ad-skip-button-modern',
+                  '.ytp-skip-ad-button',
+                  '.ytp-ad-skip-button-text',
+                  '.ytp-ad-skip-button-container button',
+                  'button.ytp-ad-skip-button-modern',
+                  '[id^="skip-button"] button',
+                  '.ytp-ad-overlay-close-button'
+                ];
+                for (const sel of skipSelectors) {
+                  const btn = document.querySelector(sel);
+                  if (btn) {
+                    btn.click();
+                    break;
+                  }
+                }
+              } else if (wasAdShowing) {
+                wasAdShowing = false;
+                if (video) {
+                  video.playbackRate = 1.0;
+                  video.muted = originalMuted;
+                }
+              }
             };
-            trySkip();
-            const obs = new MutationObserver(trySkip);
+
+            window.__aero_yt_interval = setInterval(checkAndSkipAd, 100);
+            checkAndSkipAd();
+
+            const obs = new MutationObserver(checkAndSkipAd);
             obs.observe(document.body || document.documentElement, { childList: true, subtree: true });
           })()
         `, true);
       } catch {}
-      return;
+      // Note: do not return early so generic cosmetic rules from filter engine also apply to YouTube
     }
 
     // Generic cosmetic CSS hiding from filter engine

@@ -64,6 +64,14 @@ async function createWindow() {
 
   registerIpcHandlers(mainWindow, { isPrivate: false });
 
+  // Forward shortcuts triggered when browser chrome window has focus
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    const handled = tabManager.handleShortcut(input);
+    if (handled) {
+      event.preventDefault();
+    }
+  });
+
   // Load the chrome interface
   mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
 

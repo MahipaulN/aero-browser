@@ -1,9 +1,8 @@
 // Comprehensive Memory & Process Diagnostics for Aero Browser
-const { app, BrowserWindow, WebContentsView } = require("electron");
+const { app, BrowserWindow } = require("electron");
 const tabManager = require("../src/main/tab-manager");
 const store = require("../src/main/store");
 const adblockManager = require("../src/main/adblock-manager");
-const profileManager = require("../src/main/profile-manager");
 
 function getFormattedMetrics() {
   const metrics = app.getAppMetrics();
@@ -137,6 +136,32 @@ async function runMemorySuite() {
   console.log(`RAM after 50 switches: ${results.afterRapidSwitching.totalWorkingSetMB} MB (Delta: ${memoryDelta > 0 ? `+${memoryDelta}` : memoryDelta} MB)`);
   console.log(`[PASS] Tab switching stability: ${Math.abs(memoryDelta) < 60 ? "No memory leak detected" : "Warning: memory growth"}`);
 
+  // --- SCENARIO 7: 20-CYCLE TAB OPEN / NAVIGATE / CLOSE LEAK VERIFICATION ---
+  console.log("\n--- SCENARIO 7: 20-Cycle Open/Navigate/Close Leak Test ---");
+  const cycleStartRam = getFormattedMetrics().totalWorkingSetMB;
+  const cycleStartTabs = tabManager.tabs.size;
+
+  for (let i = 1; i <= 20; i++) {
+    const cycleTabId = tabManager.createTab("https://duckduckgo.com/", true);
+    await delay(100);
+    tabManager.navigate("https://en.wikipedia.org/wiki/Special:Random");
+    await delay(100);
+    tabManager.closeTab(cycleTabId);
+    if (i % 5 === 0) {
+      if (global.gc) global.gc();
+      const current = getFormattedMetrics();
+      console.log(`  Cycle ${i}/20: Tabs: ${tabManager.tabs.size} | RAM: ${current.totalWorkingSetMB} MB`);
+    }
+  }
+
+  if (global.gc) global.gc();
+  await delay(1500);
+  results.after20Cycles = getFormattedMetrics();
+  const cycleDelta = results.after20Cycles.totalWorkingSetMB - cycleStartRam;
+  console.log(`RAM after 20 open/navigate/close cycles: ${results.after20Cycles.totalWorkingSetMB} MB (Delta: ${cycleDelta > 0 ? `+${cycleDelta}` : cycleDelta} MB)`);
+  console.log(`Tabs registry size: ${tabManager.tabs.size} (Initial: ${cycleStartTabs})`);
+  console.log(`[PASS] Leak test evaluation: ${cycleDelta < 100 ? "No unbounded memory leak detected" : "Warning: potential leak detected"}`);
+
   console.log("\n=================================================");
   console.log("   DIAGNOSTIC SUMMARY COMPLETE                   ");
   console.log("=================================================");
@@ -146,7 +171,8 @@ async function runMemorySuite() {
     fiveTabs: results.fiveTabs.totalWorkingSetMB,
     tenTabs: results.tenTabs.totalWorkingSetMB,
     afterClosingFiveTabs: results.afterClosingFiveTabs.totalWorkingSetMB,
-    afterRapidSwitching: results.afterRapidSwitching.totalWorkingSetMB
+    afterRapidSwitching: results.afterRapidSwitching.totalWorkingSetMB,
+    after20Cycles: results.after20Cycles.totalWorkingSetMB
   }, null, 2));
 
   tabManager.destroy();
