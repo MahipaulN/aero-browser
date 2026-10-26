@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https:; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <title>Aero Browser</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <!-- macOS Sonoma / Sequoia Frosted-Glass Chrome Header -->
+    <header class="chrome" id="chromeHeader">
+      <!-- Tab Strip Bar -->
+      <div class="tabbar" id="tabbar">
+        <div class="traffic-lights" id="trafficLights" aria-label="Window controls">
+          <button class="traffic red" id="closeWindow" title="Close window (Alt+F4)" aria-label="Close window">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#4c0000" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+          <button class="traffic yellow" id="minWindow" title="Minimize window" aria-label="Minimize window">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#5c4300" stroke-width="3" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </button>
+          <button class="traffic green" id="maxWindow" title="Maximize / Restore window" aria-label="Maximize window">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#004c08" stroke-width="3" stroke-linecap="round"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>
+          </button>
+        </div>
+
+        <div id="tabs" class="tabs" role="tablist" aria-label="Browser tabs"></div>
+
+        <div class="tabbar-actions">
+          <button id="newTab" class="icon-btn" title="New tab (Ctrl+T)" aria-label="New tab"></button>
+          <button id="menuButton" class="icon-btn" title="Aero Menu" aria-label="Open menu"></button>
+        </div>
+      </div>
+
+      <!-- Navigation & Omnibox Toolbar -->
+      <div class="toolbar" id="toolbar">
+        <div class="nav-group">
+          <button id="back" class="icon-btn" title="Back (Alt+Left)" aria-label="Back" disabled></button>
+          <button id="forward" class="icon-btn" title="Forward (Alt+Right)" aria-label="Forward" disabled></button>
+          <button id="reload" class="icon-btn" title="Reload (Ctrl+R)" aria-label="Reload"></button>
+          <button id="home" class="icon-btn" title="Home page" aria-label="Home page"></button>
+        </div>
+
+        <div class="address-container" id="addressContainer">
+          <div class="address-bar" id="addressBar">
+            <button type="button" id="securityBadge" class="security-badge" title="View connection security" aria-label="Security status"></button>
+            <input id="addressInput" class="address-input" type="text" placeholder="Search or enter web address" autocomplete="off" spellcheck="false" aria-label="Address bar">
+            <button type="button" id="bookmarkButton" class="bookmark-btn" title="Bookmark page (Ctrl+D)" aria-label="Bookmark page"></button>
+          </div>
+
+          <div id="autocompleteDropdown" class="autocomplete-dropdown" hidden></div>
+          <div id="loadingBar" class="loading-bar"></div>
+        </div>
+
+        <div class="nav-group">
+          <button id="shieldButton" class="icon-btn shield-btn" title="Aero Shields (Ad & Tracker Blocker)" aria-label="Aero Shields">
+            <span id="shieldIcon"></span>
+            <span id="shieldBadge" class="shield-badge" hidden>0</span>
+          </button>
+          <button id="findButton" class="icon-btn" title="Find in page (Ctrl+F)" aria-label="Find in page"></button>
+          <button id="downloadsButton" class="icon-btn" title="Downloads (Ctrl+J)" aria-label="Downloads">
+            <span id="downloadsBadge" class="badge-dot" hidden></span>
+          </button>
+          <button id="historyButton" class="icon-btn" title="History (Ctrl+H)" aria-label="History"></button>
+          <button id="bookmarksBarToggle" class="icon-btn" title="Bookmarks (Ctrl+Shift+B)" aria-label="Bookmarks"></button>
+          <button id="settingsButton" class="icon-btn" title="Settings" aria-label="Settings"></button>
+        </div>
+      </div>
+
+      <!-- Bookmarks Bar -->
+      <nav id="bookmarksBar" class="bookmarks-bar" aria-label="Bookmarks bar" hidden></nav>
+
+      <!-- Find in Page Bar (Integrated in Chrome Header) -->
+      <div id="findRow" class="find-row" hidden>
+        <span class="autocomplete-icon" id="findIcon"></span>
+        <input id="findInput" class="find-input" placeholder="Find in page..." aria-label="Find text">
+        <span id="findCount" class="find-count">0 of 0</span>
+        <button id="findPrev" class="icon-btn" title="Previous match (Shift+Enter)" aria-label="Previous match"></button>
+        <button id="findNext" class="icon-btn" title="Next match (Enter)" aria-label="Next match"></button>
+        <button id="findClose" class="icon-btn" title="Close (Escape)" aria-label="Close find bar"></button>
+      </div>
+
+      <!-- Aero Shields / Ad-Blocker Drawer (Integrated in Chrome Header) -->
+      <div id="shieldDrawer" class="shield-drawer" hidden>
+        <div class="shield-drawer-left">
+          <div class="shield-drawer-icon" id="shieldDrawerIcon"></div>
+          <div class="shield-drawer-info">
+            <strong id="shieldSiteDomain">Current Site</strong>
+            <span id="shieldStatusText">Shields active: blocking ads & trackers</span>
+          </div>
+        </div>
+        <div class="shield-drawer-right">
+          <div class="shield-stat-pill">
+            <span id="shieldBlockedCount" class="shield-stat-number">0</span>
+            <span class="shield-stat-label">blocked</span>
+          </div>
+          <label class="switch-toggle" title="Toggle ad blocking for this site">
+            <input type="checkbox" id="shieldSiteToggle" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Security Details Drawer (Integrated in Chrome Header) -->
+      <div id="securityDrawer" class="security-drawer" hidden>
+        <div class="security-drawer-content">
+          <div class="security-drawer-header">
+            <span id="secBadgeIcon"></span>
+            <strong id="secOrigin">Connection Details</strong>
+          </div>
+          <p id="secDetailsText">Verified HTTPS Connection.</p>
+        </div>
+        <button id="closeSecDrawer" class="icon-btn" aria-label="Close">×</button>
+      </div>
+    </header>
+
+    <!-- Main View Area (WebContentsView is placed over this canvas when viewing external websites) -->
+    <main class="page-area" id="pageArea">
+      <!-- 1. Start Page (New Tab Canvas: aero://newtab) -->
+      <section id="startPage" class="start-page wallpaper-aurora">
+        <div class="start-content">
+          <div id="startClock" class="start-clock">12:00</div>
+          <div id="startGreeting" class="start-greeting">Good day to explore</div>
+
+          <div class="brand-container">
+            <div class="brand-mark-img">
+              <img src="assets/icon.png" alt="Aero" width="64" height="64">
+            </div>
+            <h1 class="brand-title">Aero</h1>
+            <p class="brand-tagline">Fast, elegant, and frosted for Windows.</p>
+          </div>
+
+          <form id="startSearchForm" class="start-search-box">
+            <span id="startSearchIcon" class="autocomplete-icon"></span>
+            <input id="startSearchInput" class="start-search-input" placeholder="Search the web or enter URL..." autocomplete="off" aria-label="Search the web">
+            <button type="submit" class="start-search-submit" aria-label="Search">↵</button>
+          </form>
+
+          <!-- Speed Dial Shortcuts -->
+          <div class="start-section-heading">Shortcuts</div>
+          <div id="speedDialGrid" class="speed-dial"></div>
+
+          <!-- Quick Bookmarks on Start Page -->
+          <div class="start-section-heading" style="margin-top:28px;">Favorites</div>
+          <div id="startBookmarksGrid" class="start-bookmarks-grid"></div>
+        </div>
+      </section>
+
+      <!-- 2. Settings Page (aero://settings) -->
+      <section id="settingsPage" class="internal-page" hidden>
+        <div class="page-container">
+          <div class="page-title-row">
+            <h2>Settings</h2>
+            <div style="font-size:12px; color:var(--text-tertiary);">Aero Preferences</div>
+          </div>
+
+          <div class="settings-layout">
+            <nav class="settings-sidebar">
+              <button class="settings-nav-btn active" data-tab="general">General</button>
+              <button class="settings-nav-btn" data-tab="appearance">Appearance</button>
+              <button class="settings-nav-btn" data-tab="shields">Aero Shields</button>
+              <button class="settings-nav-btn" data-tab="privacy">Privacy & Data</button>
+              <button class="settings-nav-btn" data-tab="permissions">Permissions</button>
+              <button class="settings-nav-btn" data-tab="shortcuts">Shortcuts</button>
+              <button class="settings-nav-btn" data-tab="about">About Aero</button>
+            </nav>
+
+            <div class="settings-content" id="settingsContentArea"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. History Page (aero://history) -->
+      <section id="historyPage" class="internal-page" hidden>
+        <div class="page-container">
+          <div class="page-title-row">
+            <h2>Browsing History</h2>
+            <div style="display:flex; gap:8px;">
+              <input id="historySearchInput" class="page-search-input" placeholder="Search history...">
+              <button id="clearAllHistoryBtn" class="action-btn danger">Clear History</button>
+            </div>
+          </div>
+          <div id="historyPageList" class="items-list"></div>
+        </div>
+      </section>
+
+      <!-- 4. Bookmarks Page (aero://bookmarks) -->
+      <section id="bookmarksPage" class="internal-page" hidden>
+        <div class="page-container">
+          <div class="page-title-row">
+            <h2>Bookmarks Manager</h2>
+            <div style="display:flex; gap:8px;">
+              <input id="bookmarksSearchInput" class="page-search-input" placeholder="Search bookmarks...">
+              <button id="exportBookmarksBtn" class="action-btn">Export</button>
+              <button id="importBookmarksBtn" class="action-btn">Import</button>
+            </div>
+          </div>
+          <div id="bookmarksPageList" class="items-list"></div>
+        </div>
+      </section>
+
+      <!-- 5. Downloads Page (aero://downloads) -->
+      <section id="downloadsPage" class="internal-page" hidden>
+        <div class="page-container">
+          <div class="page-title-row">
+            <h2>Downloads</h2>
+            <div style="display:flex; gap:8px;">
+              <button id="openDownloadsFolderPage" class="action-btn">Open Folder</button>
+              <button id="clearDownloadsPage" class="action-btn">Clear List</button>
+            </div>
+          </div>
+          <div id="downloadsPageList" class="items-list"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Hidden file input for bookmarks import -->
+    <input type="file" id="bookmarksFileInput" accept=".json,application/json" hidden>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
+  </div>
+
+  <script src="icons.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

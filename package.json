@@ -1,0 +1,67 @@
+{
+  "name": "aero-browser",
+  "version": "0.1.0",
+  "description": "A security-conscious Chromium desktop browser for Windows",
+  "private": true,
+  "main": "src/main/index.js",
+  "author": "Aero Browser",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.18.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "dist": "electron-builder --win nsis",
+    "pack": "electron-builder --dir",
+    "lint": "eslint .",
+    "test": "node --test",
+    "test:e2e": "electron scripts/e2e-playback.js",
+    "test:memory": "electron --js-flags=\"--expose-gc\" scripts/memory-profile.js"
+  },
+  "devDependencies": {
+    "electron": "^35.7.5",
+    "electron-builder": "^26.0.12",
+    "eslint": "^9.25.1"
+  },
+  "build": {
+    "appId": "com.aerobrowser.desktop",
+    "productName": "Aero Browser",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "build/icon.ico",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Aero-Browser-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Aero Browser",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "uninstallDisplayName": "Aero Browser",
+      "deleteAppDataOnUninstall": false
+    }
+  },
+  "dependencies": {
+    "@ghostery/adblocker-electron": "^2.20.1"
+  }
+}
