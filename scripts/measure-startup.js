@@ -1,5 +1,4 @@
 const { app, BrowserWindow, session } = require("electron");
-const path = require("path");
 const store = require("../src/main/store");
 const adblockManager = require("../src/main/adblock-manager");
 
@@ -50,14 +49,6 @@ async function measureStartup(enabled) {
   wc.on("did-finish-load", async () => {
     marks.didFinishLoad = Date.now() - t0;
     console.log(`[+${marks.didFinishLoad}ms] did-finish-load`);
-  });
-
-  // Track network requests
-  let reqCount = 0;
-  let blockedCount = 0;
-  ses.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, cb) => {
-    reqCount++;
-    cb({});
   });
 
   const targetUrl = "https://www.youtube.com/watch?v=M7lc1UVf-VE";
